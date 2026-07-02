@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Crystal Instruction — ClearLesson Launch (Core / Support / Extend)</title>
+
+<!--
+  CRYSTAL INSTRUCTION · CLEARLESSONS — LESSON LAUNCH MODAL (PROTOTYPE)
+  ===================================================================
+  Redesign of the existing "ClearLesson" launch dialog. Three changes:
+
+    1. TIER PICKER — Core / Support / Extend as selectable buttons (not a
+       dropdown). Support = pre-produced "simplified" tier; Extend = harder
+       tier. Both are STATIC, published-once artifacts (see tiering console);
+       launching one costs nothing at runtime.
+
+    2. DATA-DRIVEN RECOMMENDATION — the platform pre-selects a tier for the
+       chosen class using its most recent exit-ticket data, and shows WHY.
+       recommendTier(entity) is the one piece of logic that matters (below).
+
+    3. RECOMMENDED GROUPINGS — teachers ALREADY have small groups created,
+       so "By small group" PULLS the teacher's own groups (it does not invent
+       them) and recommends a version for each group from that group's data.
+       Teacher can override any group's version. One launch runs the whole
+       differentiated room — the brief's "three versions in the same room."
+
+  Buttons-over-dropdowns throughout, per design preference.
+
+  BACKEND WORK FLAGGED FOR DEVS
+  -----------------------------
+  - class.mastery / group.mastery come from the same exit-ticket feed as the
+    Crystal dashboard's deriveAction(). Wire to the real skill/standard map.
+  - class.groups pulls the teacher's existing small groups (Class Manager >
+    Manage Small Groups). Do NOT synthesize groups here.
+  - Tier availability: a lesson only offers a tier if that tier was published
+    for it. Grey out + "not yet tiered" when absent (shown for one lesson).
+-->
+
+<style>
+  :root {
+    --brand:#c21c93; --brand-2:#e5199a; --brand-soft:#fbeaf4;
+    --ink:#1d1d20; --ink-2:#5f5e5a; --ink-3:#8a8984;
+    --line:#e7e3ea; --page:#f4f1f6; --card:#fff; --radius:12px;
+    --support:#a5750a;--support-bg:#fdf6dc;--support-line:#e8c23c;  /* yellow */
+    --core:#0f7a58;   --core-bg:#e3f5ee;   --core-line:#80cfac;    /* green  */
+    --extend:#2f6fdc; --extend-bg:#e8f0fc; --extend-line:#a6c6f3;  /* blue   */
+    --shadow:0 1px 2px rgba(30,20,40,.04),0 4px 16px rgba(30,20,40,.05);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { font-family:var(--font); color:var(--ink); background:var(--page); font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .app { display:flex; min-height:100vh; }
+
+  /* -------- sidebar backdrop -------- */
+  .sidebar { width:230px; flex-shrink:0; background:var(--card); border-right:1px solid var(--line); padding:18px 12px; display:flex; flex-direction:column; }
+  .logo { display:flex; align-items:center; gap:9px; padding:0 8px 20px; }
+  .logo .mark { width:26px; height:26px; }
+  .logo .name { font-weight:700; font-size:17px; line-height:1.05; }
+  .logo .name span { color:var(--brand); display:block; }
+  .logo .name em { color:var(--ink); font-style:normal; font-weight:500; font-size:14px; display:block; }
+  .nav { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px; }
+  .nav a { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:10px; color:var(--ink-2); text-decoration:none; font-size:14px; font-weight:500; }
+  .nav a.active { background:var(--ink); color:#fff; }
+  .nav svg { width:18px; height:18px; }
+  .subnav { list-style:none; margin:2px 0 2px; padding:0 0 0 14px; display:flex; flex-direction:column; gap:1px; }
+  .subnav a { font-size:13px; padding:7px 12px; border-radius:8px; color:var(--ink-2); text-decoration:none; }
+  .subnav a.active { color:var(--brand); font-weight:600; }
+
+  /* -------- main / grid backdrop -------- */
+  .main { flex:1; min-width:0; padding:22px 30px 40px; }
+  .topbar { display:flex; align-items:center; gap:14px; margin-bottom:20px; }
+  .title { font-size:26px; font-weight:700; letter-spacing:-.3px; }
+  .search { flex:1; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 16px; color:var(--ink-3); font-size:15px; }
+  .results { color:var(--ink-2); font-weight:600; font-size:15px; margin-bottom:14px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .lcard { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
+  .lcard .thumb { height:120px; background:linear-gradient(135deg,#3a2a1e,#6b4a2e); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:15px; text-align:center; padding:0 16px; }
+  .lcard.sci .thumb { background:linear-gradient(135deg,#7a1f6b,#c21c93); }
+  .lcard .body { padding:12px 14px; }
+  .lcard .lt { font-size:11px; color:var(--ink-3); }
+  .lcard .ln { font-size:15px; font-weight:600; margin:2px 0 10px; }
+  .lcard .meta { display:flex; gap:18px; font-size:12px; }
+  .lcard .meta b { display:block; color:var(--ink); }
+  .lcard .meta span { color:var(--ink-3); }
+
+  /* -------- overlay + modal -------- */
+  .overlay { position:fixed; inset:0; background:rgba(25,15,35,.5); display:flex; align-items:flex-start; justify-content:center; padding:34px 20px; z-index:50; overflow:auto; }
+  .modal { background:#fff; border-radius:16px; width:100%; max-width:560px; box-shadow:0 18px 60px rgba(20,10,30,.32); overflow:hidden; }
+  .m-head { background:var(--brand-soft); padding:16px 22px; display:flex; align-items:center; justify-content:space-between; }
+  .m-head .h-title { font-size:16px; font-weight:700; color:var(--brand); }
+  .m-head .h-sub { font-size:12.5px; color:var(--ink-2); margin-top:1px; }
+  .x-btn { background:none; border:none; color:var(--ink-3); font-size:24px; line-height:1; cursor:pointer; padding:0; }
+  .m-body { padding:18px 22px 6px; }
+  .m-body .lname { font-size:19px; font-weight:700; letter-spacing:-.2px; margin:0 0 2px; }
+  .m-body .lmeta { font-size:13px; color:var(--ink-3); margin-bottom:16px; }
+  .m-body .lmeta b { color:var(--ink-2); }
+
+  .field { margin-bottom:18px; }
+  .field > label { display:block; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3); margin-bottom:8px; }
+  .field > .sub { font-size:12.5px; color:var(--ink-3); font-weight:400; text-transform:none; letter-spacing:0; margin:-4px 0 9px; }
+
+  /* segmented button groups (replaces dropdowns) */
+  .seg { display:inline-flex; flex-wrap:wrap; gap:8px; }
+  .seg button { font-family:var(--font); font-size:14px; font-weight:600; padding:9px 15px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--ink-2); cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .seg button:hover { border-color:var(--ink-3); }
+  .seg button.on { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .seg button .cdot { width:8px; height:8px; border-radius:50%; background:var(--brand); }
+  .seg button.on .cdot { background:#fff; }
+
+  /* recommendation banner */
+  .rec { display:flex; gap:12px; align-items:flex-start; background:linear-gradient(90deg,var(--brand-soft),#fff 90%); border:1px solid var(--brand-soft); border-left:3px solid var(--brand); border-radius:10px; padding:11px 14px; margin-bottom:16px; }
+  .rec .star { width:20px; height:20px; color:var(--brand); flex-shrink:0; margin-top:1px; }
+  .rec .rtxt { font-size:13px; color:var(--ink-2); }
+  .rec .rtxt b { color:var(--ink); }
+  .rec .rtitle { font-weight:700; color:var(--brand); font-size:13.5px; }
+
+  /* whole-class tier cards */
+  .tiers { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .tier { position:relative; text-align:left; font-family:var(--font); cursor:pointer; background:#fff; border:1.5px solid var(--line); border-radius:12px; padding:13px; }
+  .tier:hover { border-color:var(--ink-3); }
+  .tier .tname { font-size:15px; font-weight:700; display:flex; align-items:center; gap:7px; margin-bottom:5px; }
+  .tier .tdot { width:10px; height:10px; border-radius:50%; }
+  .tier .ttag { font-size:12px; color:var(--ink-2); line-height:1.4; }
+  .tier[data-tier="core"] .tdot{background:var(--core);} .tier[data-tier="support"] .tdot{background:var(--support);} .tier[data-tier="extend"] .tdot{background:var(--extend);}
+  /* persistent color outline per tier */
+  .tier[data-tier="support"]{border-color:var(--support-line);}
+  .tier[data-tier="core"]{border-color:var(--core-line);}
+  .tier[data-tier="extend"]{border-color:var(--extend-line);}
+  .tier.sel[data-tier="core"]{border-color:var(--core);background:var(--core-bg);}
+  .tier.sel[data-tier="support"]{border-color:#d9a400;background:var(--support-bg);}
+  .tier.sel[data-tier="extend"]{border-color:var(--extend);background:var(--extend-bg);}
+  .tier .rbadge { position:absolute; top:-9px; right:9px; background:var(--brand); color:#fff; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:999px; box-shadow:var(--shadow); }
+  .tier .check { position:absolute; top:10px; right:10px; width:18px; height:18px; border-radius:50%; display:none; align-items:center; justify-content:center; color:#fff; }
+  .tier.sel .check { display:flex; }
+  .tier.sel[data-tier="core"] .check{background:var(--core);} .tier.sel[data-tier="support"] .check{background:var(--support);} .tier.sel[data-tier="extend"] .check{background:var(--extend);}
+  .tier[disabled]{ opacity:.5; cursor:not-allowed; }
+  .tier .na { font-size:11px; color:var(--ink-3); font-style:italic; margin-top:5px; }
+
+  /* recommended-groupings list (teacher's own groups) */
+  .groups { display:flex; flex-direction:column; gap:10px; }
+  .grow { border:1px solid var(--line); border-radius:12px; padding:12px 13px; }
+  .grow .gtop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+  .grow .gname { font-size:14.5px; font-weight:700; }
+  .grow .gsize { font-size:12px; color:var(--ink-3); font-weight:500; margin-left:6px; }
+  .grow .gwhy { font-size:12.5px; color:var(--ink-2); margin:3px 0 0; }
+  .grow .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:7px; }
+  .grow .chip { font-size:11px; background:var(--page); border:1px solid var(--line); border-radius:999px; padding:2px 8px; color:var(--ink-2); }
+  /* per-group tier override */
+  .gseg { display:inline-flex; gap:5px; margin-top:10px; }
+  .gseg button { position:relative; font-family:var(--font); font-size:12.5px; font-weight:600; padding:6px 11px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--ink-2); cursor:pointer; }
+  .gseg button:hover { border-color:var(--ink-3); }
+  .gseg button.on[data-t="core"]{background:var(--core-bg);border-color:var(--core-line);color:var(--core);}
+  .gseg button.on[data-t="support"]{background:var(--support-bg);border-color:var(--support-line);color:var(--support);}
+  .gseg button.on[data-t="extend"]{background:var(--extend-bg);border-color:var(--extend-line);color:var(--extend);}
+  .gseg button .rmini { position:absolute; top:-6px; right:-4px; font-size:8px; font-weight:800; letter-spacing:.3px; background:var(--brand); color:#fff; padding:1px 4px; border-radius:999px; text-transform:uppercase; }
+  /* groupings carousel */
+  .carousel { display:flex; align-items:stretch; gap:8px; }
+  .carousel .grow { flex:1; margin:0; }
+  .arrow { flex-shrink:0; width:34px; border:1px solid var(--line); background:#fff; border-radius:10px; cursor:pointer; color:var(--ink-2); font-size:22px; line-height:1; display:flex; align-items:center; justify-content:center; }
+  .arrow:hover { border-color:var(--ink-3); color:var(--ink); }
+  .gnav { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:10px; }
+  .gdots { display:flex; gap:6px; }
+  .gdot { width:7px; height:7px; border-radius:50%; background:var(--line); cursor:pointer; border:none; padding:0; }
+  .gdot.on { background:var(--brand); }
+  .gcount { font-size:12px; color:var(--ink-3); font-weight:600; }
+
+  /* language + rewards */
+  .rowsplit { display:flex; gap:26px; flex-wrap:wrap; align-items:flex-end; }
+  .toggle-chip { display:inline-flex; align-items:center; gap:8px; font-size:13.5px; font-weight:600; color:var(--ink-2); cursor:pointer; user-select:none; padding:9px 13px; border:1px solid var(--line); border-radius:10px; }
+  .toggle-chip input { accent-color:var(--brand); width:16px; height:16px; }
+
+  /* footer */
+  .m-foot { padding:16px 22px 20px; display:flex; gap:10px; justify-content:flex-end; align-items:center; border-top:1px solid var(--line); margin-top:6px; }
+  .m-foot .spacer { flex:1; font-size:12.5px; color:var(--ink-3); }
+  .btn { font-family:var(--font); font-size:14.5px; font-weight:700; padding:11px 20px; border-radius:10px; cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--ink); display:inline-flex; align-items:center; gap:8px; }
+  .btn.close { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .btn.start { background:var(--brand-2); border-color:var(--brand-2); color:#fff; }
+  .btn.start:hover { background:var(--brand); border-color:var(--brand); }
+  .btn svg { width:16px; height:16px; }
+
+  .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(16px); background:var(--ink); color:#fff; padding:12px 20px; border-radius:10px; font-size:14px; font-weight:600; box-shadow:0 10px 30px rgba(20,10,30,.3); opacity:0; transition:.25s; z-index:80; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">
+      <svg class="mark" viewBox="0 0 24 24" fill="none"><path d="M12 1.5 21 9l-9 13.5L3 9z" fill="#c21c93"/><path d="M12 1.5 21 9l-9 13.5z" fill="#e0559a"/></svg>
+      <div class="name"><span>Crystal</span><em>Instruction</em></div>
+    </div>
+    <ul class="nav">
+      <li><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>Home</a></li>
+      <li><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.5M21 20a5 5 0 0 0-4-4.9"/></svg>Class Manager</a></li>
+      <li><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>ClearSheets</a></li>
+      <li><a href="#" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 4h18M4 4v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4M9 20l3-4 3 4"/></svg>ClearLessons</a></li>
+    </ul>
+    <ul class="subnav">
+      <li><a href="#" class="active">ClearLessons</a></li>
+      <li><a href="#">Snap Lessons</a></li>
+      <li><a href="#">Paused Lessons</a></li>
+      <li><a href="#">Lesson Summaries</a></li>
+      <li><a href="#">My Lessons</a></li>
+    </ul>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">ClearLessons</div>
+      <div class="search">Search for any keyword (standard ID, title, topic name etc.)</div>
+    </div>
+    <div class="results">463 Results found</div>
+    <div class="grid">
+      <div class="lcard"><div class="thumb">COMPARE WHOLE NUMBERS UP TO 100,000</div><div class="body"><div class="lt">Title</div><div class="ln">Compare Whole Numbers up to 100,000</div><div class="meta"><span>Grade<b>3</b></span><span>Subject<b>Math</b></span><span>Standard<b>3.2D</b></span></div></div></div>
+      <div class="lcard sci"><div class="thumb">FLAVOR MALFUNCTION</div><div class="body"><div class="lt">Title</div><div class="ln">Represent Multiplication Facts</div><div class="meta"><span>Grade<b>3</b></span><span>Subject<b>Math</b></span><span>Standard<b>3.4C</b></span></div></div></div>
+      <div class="lcard"><div class="thumb">COUNTING MONEY</div><div class="body"><div class="lt">Title</div><div class="ln">Counting Money</div><div class="meta"><span>Grade<b>3</b></span><span>Subject<b>Math</b></span><span>Standard<b>3.4C</b></span></div></div></div>
+    </div>
+  </main>
+</div>
+
+<!-- ---------- LAUNCH MODAL ---------- -->
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="m-head">
+      <div>
+        <div class="h-title">Launch ClearLesson</div>
+        <div class="h-sub">Pick a class — we'll recommend the right version</div>
+      </div>
+      <button class="x-btn" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="m-body">
+      <p class="lname">Represent Multiplication Facts</p>
+      <p class="lmeta">Grade <b>3</b> · <b>Math</b> · Standard <b>3.4C</b> · objective preserved across all versions</p>
+
+      <div class="field">
+        <label>Grade</label>
+        <div class="seg" id="gradeSeg"></div>
+      </div>
+
+      <div class="field">
+        <label>Class</label>
+        <div class="seg" id="classSeg"></div>
+      </div>
+
+      <div class="rec" id="rec"></div>
+
+      <div class="field">
+        <label>Who's this for?</label>
+        <div class="seg" id="audienceSeg">
+          <button data-aud="class" class="on" onclick="setAudience('class')">Whole class</button>
+          <button data-aud="group" onclick="setAudience('group')">By small group</button>
+        </div>
+      </div>
+
+      <div class="field" id="tierField">
+        <label id="tierLabel">Version</label>
+        <div class="sub" id="tierSub" style="display:none">Pulled from your small groups — each set to the version its recent data suggests. Override any of them.</div>
+        <div class="tiers" id="tiers"></div>
+        <div class="groups" id="groups" style="display:none"></div>
+      </div>
+
+      <div class="field">
+        <div class="rowsplit">
+          <div>
+            <label>Language</label>
+            <div class="seg" id="langSeg">
+              <button class="on" data-lang="en" onclick="setLang('en')">English</button>
+              <button data-lang="es" onclick="setLang('es')">Spanish</button>
+            </div>
+          </div>
+          <label class="toggle-chip"><input type="checkbox" id="cc" /> Enhance with ClassCade Rewards</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="m-foot">
+      <span class="spacer" id="footNote"></span>
+      <button class="btn close">Close</button>
+      <button class="btn start" id="startBtn" onclick="start()"></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const ICON = {
+  star:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 6.3L21 9l-5 4.3L17.5 21 12 17.3 6.5 21 8 13.3 3 9l6.4-.7z"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12.5 10 17l9-10"/></svg>',
+  play:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>',
+};
+
+/* ---------- DATA ----------
+   Each class carries its latest exit-ticket mastery AND the teacher's OWN
+   small groups (pulled from Class Manager). We recommend a version per class
+   and per group — we never invent groups. */
+const PREREQ = 'equal groups → arrays';
+const CLASSES = [
+  { id:'mav', grade:3, name:'Montagne Mavericks', size:18, mastery:56, groups:[
+      { id:'m1', name:'Reteach Crew',  size:6, mastery:41, students:['Aisha','Marcus','Leo','Priya','Devon','Sam'] },
+      { id:'m2', name:'On-Level',      size:9, mastery:64, students:['Cole','Nina','Jae','Rosa','Ken','Uma','Ty','Bea','Hank'] },
+      { id:'m3', name:'Challenge',     size:3, mastery:92, students:['Ivy','Noah','Wren'] },
+    ]},
+  { id:'p2', grade:3, name:'2nd Period', size:22, mastery:88, groups:[
+      { id:'p2a', name:'Enrichment',   size:14, mastery:94, students:['Ada','Ben','Cruz','Dev','Ella','Finn','Gus','Hana','Ira','Jo','Kai','Lux','Max','Nia'] },
+      { id:'p2b', name:'Check-in',     size:8,  mastery:68, students:['Tess','Owen','Rex','Sky','Vin','Wes','Yaz','Zed'] },
+    ]},
+  { id:'home', grade:3, name:'Homeroom', size:16, mastery:72, groups:[
+      { id:'h1', name:'Support Group', size:5, mastery:48, students:['Riley','Jordan','Mia','Cade','Ivy'] },
+      { id:'h2', name:'Core Group',    size:9, mastery:74, students:['Ana','Bo','Cy','Deb','Eve','Fox','Gia','Hue','Ike'] },
+      { id:'h3', name:'Stretch',       size:2, mastery:90, students:['Sol','Wren'] },
+    ]},
+  { id:'rk', grade:4, name:'Period 5 Rockets', size:20, mastery:70, groups:[
+      { id:'r1', name:'Foundations',   size:7, mastery:52, students:['Ari','Bex','Cai','Dot','Eli','Fay','Gio'] },
+      { id:'r2', name:'Grade-Level',   size:13, mastery:81, students:['Hal','Isa','Jud','Kip','Lia','Moe','Nel','Ora','Pax','Qui','Ren','Sia','Tao'] },
+    ]},
+];
+const GRADES = [...new Set(CLASSES.map(c => c.grade))].sort((a,b)=>a-b);
+
+const AVAILABLE = { core:true, support:true, extend:true };
+const TIERS = {
+  support: { label:'Support', tag:'Lower reading load, chunked steps, worked examples.' },
+  core:    { label:'Core',    tag:'Grade-level lesson, as written.' },
+  extend:  { label:'Extend',  tag:'Higher DOK — novel contexts and justification.' },
+};
+
+/* ---------- THE LOGIC THAT MATTERS: recommend a tier from data ----------
+   Works for a whole class OR a single group — both carry {name,size,mastery}. */
+const ON_TRACK = 85, STRUGGLING = 60;
+function recommendTier(e) {
+  const missed = Math.round(e.size * (1 - e.mastery / 100));
+  if (e.mastery >= ON_TRACK)
+    return { tier:'extend',
+      short:`${e.mastery}% mastery — ready to go deeper`,
+      reason:`<b>${e.name}</b> mastered the prerequisite (<b>${e.mastery}%</b> on “${PREREQ}”). Ready to go deeper.` };
+  if (e.mastery < STRUGGLING)
+    return { tier:'support',
+      short:`${e.mastery}% mastery · ${missed} of ${e.size} missed the prerequisite`,
+      reason:`On the last exit ticket, <b>${missed} of ${e.size}</b> missed “${PREREQ}” (<b>${e.mastery}%</b> mastery). Start with Support.` };
+  return { tier:'core',
+    short:`${e.mastery}% mastery — on track`,
+    reason:`Mixed results last time (<b>${e.mastery}%</b> on “${PREREQ}”). Core fits most of ${e.name}.` };
+}
+
+/* ---------- STATE ---------- */
+const state = { grade:3, classId:'mav', tier:'support', audience:'class', lang:'en', groupTiers:{}, gIdx:0 };
+function currentClass(){ return CLASSES.find(c => c.id === state.classId); }
+function gradeClasses(){ return CLASSES.filter(c => c.grade === state.grade); }
+function resetGroupTiers(){
+  state.groupTiers = {};
+  currentClass().groups.forEach(g => { state.groupTiers[g.id] = recommendTier(g).tier; });
+}
+
+/* ---------- RENDER ---------- */
+function renderGrades(){
+  document.getElementById('gradeSeg').innerHTML = GRADES.map(g =>
+    `<button class="${g===state.grade?'on':''}" onclick="selectGrade(${g})">${g}</button>`).join('');
+}
+function renderClasses(){
+  document.getElementById('classSeg').innerHTML = gradeClasses().map(c =>
+    `<button class="${c.id===state.classId?'on':''}" onclick="selectClass('${c.id}')"><span class="cdot"></span>${c.name}</button>`).join('');
+}
+function renderRec(){
+  const rec = recommendTier(currentClass());
+  document.getElementById('rec').innerHTML =
+    `<span class="star">${ICON.star}</span><div class="rtxt"><span class="rtitle">Recommended: ${TIERS[rec.tier].label}</span><br>${rec.reason}</div>`;
+}
+function renderTiers(){
+  const recTier = recommendTier(currentClass()).tier;
+  document.getElementById('tiers').innerHTML = Object.keys(TIERS).map(k => {
+    const avail = AVAILABLE[k], sel = state.tier===k && avail, rec = recTier===k;
+    return `<button class="tier ${sel?'sel':''}" data-tier="${k}" ${avail?'':'disabled'} onclick="${avail?`selectTier('${k}')`:''}">
+        ${rec && avail ? '<span class="rbadge">Recommended</span>' : ''}
+        <span class="check">${ICON.check}</span>
+        <span class="tname"><span class="tdot"></span>${TIERS[k].label}</span>
+        <span class="ttag">${TIERS[k].tag}</span>
+        ${avail ? '' : '<span class="na">Not yet tiered for this lesson</span>'}
+      </button>`;
+  }).join('');
+}
+function renderGroups(){
+  const groups = currentClass().groups;
+  const i = state.gIdx = Math.min(state.gIdx, groups.length - 1);
+  const g = groups[i];
+  const rec = recommendTier(g);
+  const chosen = state.groupTiers[g.id];
+  const chips = g.students.slice(0,4).map(n=>`<span class="chip">${n}</span>`).join('')
+    + (g.students.length>4 ? `<span class="chip">+${g.students.length-4}</span>` : '');
+  const seg = Object.keys(TIERS).map(k =>
+    `<button data-t="${k}" class="${chosen===k?'on':''}" onclick="setGroupTier('${g.id}','${k}')">
+       ${rec.tier===k ? '<span class="rmini">rec</span>' : ''}${TIERS[k].label}</button>`).join('');
+  const dots = groups.map((_,k)=>`<button class="gdot ${k===i?'on':''}" onclick="goGroup(${k})" aria-label="Group ${k+1}"></button>`).join('');
+  document.getElementById('groups').innerHTML = `
+    <div class="carousel">
+      <button class="arrow" onclick="stepGroup(-1)" aria-label="Previous group">&lsaquo;</button>
+      <div class="grow">
+        <div class="gtop"><span class="gname">${g.name}<span class="gsize">${g.size} students</span></span></div>
+        <div class="gwhy">${rec.short}</div>
+        <div class="chips">${chips}</div>
+        <div class="gseg">${seg}</div>
+      </div>
+      <button class="arrow" onclick="stepGroup(1)" aria-label="Next group">&rsaquo;</button>
+    </div>
+    <div class="gnav"><div class="gdots">${dots}</div><span class="gcount">Group ${i+1} of ${groups.length}</span></div>`;
+}
+function renderFoot(){
+  const cls = currentClass(), btn = document.getElementById('startBtn');
+  if (state.audience === 'group'){
+    const n = cls.groups.length;
+    btn.innerHTML = `${ICON.play} Start ${n} versions`;
+    document.getElementById('footNote').textContent = `${n} groups in ${cls.name} · one launch`;
+  } else {
+    btn.innerHTML = `${ICON.play} Start ${TIERS[state.tier].label}`;
+    document.getElementById('footNote').textContent = `${TIERS[state.tier].label} · ${cls.name}`;
+  }
+}
+function renderAll(){ renderGrades(); renderClasses(); renderRec(); renderTiers(); renderGroups(); renderFoot(); }
+
+/* ---------- ACTIONS ---------- */
+function selectGrade(g){
+  state.grade = g;
+  state.classId = gradeClasses()[0].id;   // jump to first class in that grade
+  state.tier = recommendTier(currentClass()).tier;
+  state.gIdx = 0;
+  resetGroupTiers();
+  renderAll();
+}
+function selectClass(id){
+  state.classId = id;
+  state.tier = recommendTier(currentClass()).tier;
+  state.gIdx = 0;
+  resetGroupTiers();
+  renderAll();
+}
+function selectTier(k){ state.tier = k; renderTiers(); renderFoot(); }
+function setGroupTier(gid, k){ state.groupTiers[gid] = k; renderGroups(); }
+function stepGroup(d){ const n = currentClass().groups.length; state.gIdx = (state.gIdx + d + n) % n; renderGroups(); }
+function goGroup(k){ state.gIdx = k; renderGroups(); }
+function setAudience(a){
+  state.audience = a;
+  document.querySelectorAll('#audienceSeg button').forEach(b => b.classList.toggle('on', b.dataset.aud===a));
+  const group = a === 'group';
+  document.getElementById('tiers').style.display = group ? 'none' : 'grid';
+  document.getElementById('groups').style.display = group ? 'flex' : 'none';
+  document.getElementById('tierSub').style.display = group ? 'block' : 'none';
+  document.getElementById('tierLabel').textContent = group ? 'Recommended groupings' : 'Version';
+  renderFoot();
+}
+function setLang(l){ state.lang = l; document.querySelectorAll('#langSeg button').forEach(b => b.classList.toggle('on', b.dataset.lang===l)); }
+
+function start(){
+  const cls = currentClass(), t = document.getElementById('toast');
+  t.textContent = state.audience === 'group'
+    ? `Launching ${cls.groups.length} tiered versions for ${cls.name}…`
+    : `Launching ${TIERS[state.tier].label} for ${cls.name}…`;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+resetGroupTiers();
+renderAll();
+</script>
+</body>
+</html>
